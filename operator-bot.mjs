@@ -128,7 +128,7 @@ async function getPriceE8(symbol) {
 
 /* ---------------- transakcje (legacy gas: Robinhood Chain) ---------------- */
 async function write(address, abi, functionName, args = []) {
-  const gasPrice = await pub.getGasPrice();
+  const gasPrice = ((await pub.getGasPrice()) * 3n);
   const { request } = await pub.simulateContract({ address, abi, functionName, args, account, gasPrice });
   const hash = await wallet.writeContract({ ...request, gasPrice });
   log(`${functionName}(${args.join(",")}) @ ${address.slice(0, 10)}... -> ${hash}`);
