@@ -1,0 +1,20 @@
+{
+  "name": "battlehood-ops",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BattleHood operator + monitor bots (Robinhood Chain)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "operator": "node operator-bot.mjs",
+    "monitor": "node monitor-bot.mjs",
+    "genesis": "node operator-bot.mjs genesis",
+    "deploy-contracts": "node deploy-contracts.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "solc": "0.8.24"
+  }
+}
