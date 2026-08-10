@@ -48,9 +48,15 @@ const ORACLE_ABI = [
   { name: "latestRound", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint80" }] },
 ];
 
+const COINFLIP_ABI = [
+  { name: "totalFlips", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "firstUnsettled", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "settleNext", type: "function", stateMutability: "nonpayable", inputs: [{ type: "uint256" }], outputs: [] },
+];
+
 const {
   RPC_URL, CHAIN_ID, OPERATOR_KEY, CONTRACTS, ORACLES, SYMBOLS,
-  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, COINFLIP,
 } = process.env;
 
 if (!RPC_URL || !CHAIN_ID || !OPERATOR_KEY || !CONTRACTS || !ORACLES || !SYMBOLS) {
@@ -128,7 +134,7 @@ async function getPriceE8(symbol) {
 
 /* ---------------- transakcje (legacy gas: Robinhood Chain) ---------------- */
 async function write(address, abi, functionName, args = []) {
-  const gasPrice = ((await pub.getGasPrice()) * 3n);
+  const gasPrice = await pub.getGasPrice();
   const { request } = await pub.simulateContract({ address, abi, functionName, args, account, gasPrice });
   const hash = await wallet.writeContract({ ...request, gasPrice });
   log(`${functionName}(${args.join(",")}) @ ${address.slice(0, 10)}... -> ${hash}`);
@@ -239,6 +245,30 @@ async function loop() {
   // UWAGA na czas bloku ~101 s: transakcje sa wolne, wiec okno buffera w
   // kontrakcie na tej sieci powinno byc szerokie (patrz runbook: buffer 240).
   setInterval(() => markets.forEach((m) => void tick(m)), 10_000);
+  if (COINFLIP) {
+    log(`Coin flip keeper wlaczony dla ${COINFLIP}`);
+    setInterval(() => void settleCoinflips(), 30_000);
+  }
+}
+
+// Auto-rozlicza oczekujace rzuty moneta (gracz nie musi klikac "reveal").
+let coinBusy = false;
+async function settleCoinflips() {
+  if (coinBusy || !COINFLIP) return;
+  coinBusy = true;
+  try {
+    const [total, first] = await Promise.all([
+      pub.readContract({ address: COINFLIP, abi: COINFLIP_ABI, functionName: "totalFlips" }),
+      pub.readContract({ address: COINFLIP, abi: COINFLIP_ABI, functionName: "firstUnsettled" }),
+    ]);
+    if (total > first) {
+      await write(COINFLIP, COINFLIP_ABI, "settleNext", [20n]);
+    }
+  } catch (e) {
+    log("coinflip settle blad:", e?.shortMessage ?? e?.message ?? e);
+  } finally {
+    coinBusy = false;
+  }
 }
 
 if (process.argv[2] === "genesis") {
