@@ -41,6 +41,7 @@ const PREDICTION_ABI = [
   { name: "genesisStartRound", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { name: "genesisLockRound", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { name: "executeRound", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "setPaused", type: "function", stateMutability: "nonpayable", inputs: [{ type: "bool" }], outputs: [] },
 ];
 
 const ORACLE_ABI = [
@@ -134,6 +135,7 @@ async function getPriceE8(symbol) {
 
 /* ---------------- transakcje (legacy gas: Robinhood Chain) ---------------- */
 async function write(address, abi, functionName, args = []) {
+  // 3x zapas nad base fee (wolne bloki Robinhood Chain; nadwyzka jest zwracana)
   const gasPrice = ((await pub.getGasPrice()) * 3n);
   const { request } = await pub.simulateContract({ address, abi, functionName, args, account, gasPrice });
   const hash = await wallet.writeContract({ ...request, gasPrice });
@@ -178,6 +180,7 @@ async function genesis() {
 
 /* ---------------- petla ---------------- */
 const busy = new Set();
+const recoveryAt = new Map(); // ostatnia proba auto-recovery per rynek
 
 async function tick(market) {
   if (busy.has(market.prediction)) return;
@@ -225,8 +228,16 @@ async function tick(market) {
       await pushPrice(market);
       await write(market.prediction, PREDICTION_ABI, "executeRound");
     } else if (t > lockTs + buffer) {
-      log(`${market.symbol}: UWAGA, przegapione okno buffera rundy #${epoch}.`);
-      await tgAlert(`buffer-${market.prediction}`, 600, `OPERATOR: przegapione okno buffera rundy #${epoch} (${market.symbol}). Rundy stoja, sprawdz gaz/RPC.`);
+      // AUTO-RECOVERY: przegapione okno buffera -> pause + unpause resetuje
+      // genesis (kontrakt v2), a auto-genesis w kolejnych tickach wznawia rundy.
+      const last = recoveryAt.get(market.prediction) ?? 0;
+      if (Date.now() - last < 15 * 60_000) return; // max 1 proba / 15 min
+      recoveryAt.set(market.prediction, Date.now());
+      log(`${market.symbol}: przegapione okno buffera rundy #${epoch} -> restart rund (pause/unpause)...`);
+      await tgAlert(`buffer-${market.prediction}`, 600, `OPERATOR: runda #${epoch} (${market.symbol}) poza bufferem. Restartuje rundy automatycznie.`);
+      await write(market.prediction, PREDICTION_ABI, "setPaused", [true]);
+      await write(market.prediction, PREDICTION_ABI, "setPaused", [false]);
+      log(`${market.symbol}: unpause OK, auto-genesis wznowi rundy w nastepnych tickach.`);
     }
   } catch (e) {
     log(`${market.symbol}: blad:`, e?.shortMessage ?? e?.message ?? e);
@@ -276,3 +287,4 @@ if (process.argv[2] === "genesis") {
 } else {
   loop();
 }
+
